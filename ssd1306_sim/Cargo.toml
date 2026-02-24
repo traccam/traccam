@@ -1,0 +1,9 @@
+[package]
+name = "ssd1306_sim"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+embedded-graphics-simulator = { workspace = true}
+embedded-graphics = {workspace = true}
+traccam_common = { workspace = true, features = ["simulated_data"]}

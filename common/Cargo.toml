@@ -1,0 +1,18 @@
+[package]
+name = "traccam_common"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = []
+simulated_data = ["fastrand", "std", "chrono/clock"]
+std = []
+fastrand = ["dep:fastrand"]
+
+[dependencies]
+chrono = { workspace = true }
+embedded-graphics = { workspace = true }
+heapless = { workspace = true }
+
+# Simulated data crates
+fastrand = { version = "2.3.0", optional = true }
