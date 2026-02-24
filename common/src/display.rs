@@ -1,14 +1,17 @@
 use chrono::{FixedOffset, Timelike};
 use core::fmt::Debug;
+use std::cmp::{max, min};
 use embedded_graphics::Drawable;
+use embedded_graphics::geometry::Size;
 use embedded_graphics::image::{Image, ImageRaw};
 use embedded_graphics::mono_font::{MonoFont};
 use embedded_graphics::mono_font::MonoTextStyleBuilder;
 use embedded_graphics::mono_font::ascii::*;
 use embedded_graphics::pixelcolor::BinaryColor;
-use embedded_graphics::prelude::DrawTarget;
+use embedded_graphics::prelude::{DrawTarget, Primitive};
 use embedded_graphics::prelude::Point;
-use embedded_graphics::text::Baseline;
+use embedded_graphics::primitives::{PrimitiveStyle, Rectangle};
+use embedded_graphics::text::{Alignment, Baseline, TextStyleBuilder};
 use embedded_graphics::text::Text;
 use crate::{DisplayState, DisplayTZ};
 
@@ -64,6 +67,44 @@ where
         .unwrap();
 
     Image::new(&if state.display_tz == DisplayTZ::Utc {UTC_90DEG } else { LOC_90DEG }, Point::new(0, 21)).draw(display).unwrap();
+    draw_16_16("NO", "FIX", Point::new(54,0), blink, display);
+    draw_16_16("BAD", "FIX", Point::new(54,16), blink, display);
+    draw_16_16("NO", "PPS", Point::new(54 + 16,0), blink, display);
+    draw_16_16("BAD", "PPS", Point::new(54 + 16,16), blink, display);
+}
+
+pub fn draw_16_16<D>(l1: &str, l2: &str, top_left: Point, blink: bool, display: &mut D)
+where
+    D: DrawTarget<Color = BinaryColor>,
+    D::Error: Debug,
+{
+    Rectangle::new(top_left, Size::new(16, 16))
+        .into_styled(PrimitiveStyle::with_fill(BinaryColor::On))
+        .draw(display)
+        .unwrap();
+
+    if blink {
+        Rectangle::new(top_left + Point::new(1,1), Size::new(14, 14))
+            .into_styled(PrimitiveStyle::with_fill(BinaryColor::Off))
+            .draw(display)
+            .unwrap();
+    }
+
+    let center_point = top_left + Point::new(8, 1);
+
+    let text_style = TextStyleBuilder::new()
+        .alignment(Alignment::Center)
+        .baseline(Baseline::Top)
+        .build();
+
+    Text::with_text_style(
+        &heapless::format!(7; "{}\n{}", &l1[..min(l1.len(), 3)], &l2[..min(l2.len(), 3)]).unwrap(),
+        center_point,
+        MonoTextStyleBuilder::new().font(&FONT_5X7).text_color(if blink { BinaryColor::On } else { BinaryColor::Off }).build(),
+        text_style,
+    )
+        .draw(display)
+        .unwrap();
 }
 
 #[cfg(feature = "simulated_data")]
@@ -86,6 +127,7 @@ pub mod simulator {
                 lat: self.rng.f64() * 60.0,
                 lon: self.rng.f64() * 60.0,
                 sats: self.rng.u8(0..99),
+                hdop: 99.0,
             }
         }
     }
