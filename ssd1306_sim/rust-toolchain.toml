@@ -2,5 +2,3 @@
 # https://rust-lang.github.io/rustup-components-history
 [toolchain]
 channel = "stable"
-components = ["rust-src", "rustfmt", "llvm-tools"]
-targets = ["thumbv6m-none-eabi"]

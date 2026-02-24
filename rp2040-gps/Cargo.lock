@@ -1480,7 +1480,6 @@ dependencies = [
 [[package]]
 name = "traccam_common"
 version = "0.1.0"
-source = "git+https://github.com/traccam/common.git#285fd33f03fc2085bd78bff50fd2415ff250dfaa"
 dependencies = [
  "chrono",
  "embedded-graphics",

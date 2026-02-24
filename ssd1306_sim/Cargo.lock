@@ -448,10 +448,8 @@ checksum = "e320a6c5ad31d271ad523dcf3ad13e2767ad8b1cb8f047f75a8aeaf8da139da2"
 name = "ssd1306_sim"
 version = "0.1.0"
 dependencies = [
- "chrono",
  "embedded-graphics",
  "embedded-graphics-simulator",
- "heapless",
  "traccam_common",
 ]
 
@@ -481,7 +479,6 @@ dependencies = [
 [[package]]
 name = "traccam_common"
 version = "0.1.0"
-source = "git+https://github.com/traccam/common.git#e31b80b7ca8eb0bac05bef407c861dd52d7c20af"
 dependencies = [
  "chrono",
  "embedded-graphics",
