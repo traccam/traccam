@@ -48,8 +48,6 @@ async fn main(spawner: Spawner) {
     let mut nmea = Nmea::default();
     let mut buffer: String<128> = String::new();
 
-    info!("Waiting for u-blox M10 GPS data at 38400 baud...");
-
     loop {
         let mut byte = [0u8; 1];
 
@@ -61,15 +59,10 @@ async fn main(spawner: Spawner) {
                     if let Ok(mtype) = nmea.parse(buffer.as_str()) {
                         let mut state = DisplayState::default();
                         let sats = nmea.satellites();
-                        let max_snr = sats.iter()
-                            .filter_map(|s| s.snr())
-                            .max_by(|l,r|l.total_cmp(r)).unwrap_or(0.0);
                         state.sats = sats.len() as _;
-                        info!("{} Fix: {} Sats: {} PNR: {}", mtype, nmea.fix_type, sats.len(), nmea.pdop.unwrap_or(0.0));
 
                         // Checking only for latitude and longitude
                         if let (Some(lat), Some(lon)) = (nmea.latitude, nmea.longitude) {
-                            info!("Lat: {} | Lon: {}", lat, lon);
                             state.lat = lat;
                             state.lon = lon;
                         }
@@ -80,6 +73,10 @@ async fn main(spawner: Spawner) {
 
                         if let Some(time) = nmea.fix_time {
                             state.update_utc_time(time);
+                        }
+
+                        if let Some(hdop) = nmea.hdop() {
+                            state.hdop = hdop;
                         }
 
                         DISPLAY_SIGNAL.signal(state);

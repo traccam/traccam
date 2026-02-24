@@ -13,6 +13,7 @@ pub struct DisplayState {
     pub lat: f64,
     pub lon: f64,
     pub sats: u8,
+    pub hdop: f32,
 }
 
 #[derive(Copy, Clone, Default, PartialEq)]
