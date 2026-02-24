@@ -30,55 +30,23 @@ ssd1306 = "0.10.0"
 embedded-graphics = "0.8.2"
 traccam_common = { path = "../common", version = "0.1.0", features = [] }
 
-# cargo build/run
+# For dev
 [profile.dev]
 codegen-units = 1
 debug = 2
-debug-assertions = true
+debug-assertions = false
 incremental = false
-opt-level = 1
-overflow-checks = true
-lto = "off"
+lto = 'fat'
+opt-level = 's'
+overflow-checks = false
 
-# cargo build/run --release
+# For deployment
 [profile.release]
 codegen-units = 1
-debug = 2
+debug = 0
+strip = true
 debug-assertions = false
 incremental = false
 lto = 'fat'
 opt-level = 's'
 overflow-checks = false
-
-# do not optimize proc-macro crates = faster builds from scratch
-[profile.dev.build-override]
-codegen-units = 8
-debug = false
-debug-assertions = false
-opt-level = 0
-overflow-checks = false
-
-[profile.release.build-override]
-codegen-units = 8
-debug = false
-debug-assertions = false
-opt-level = 0
-overflow-checks = false
-
-# cargo test
-[profile.test]
-codegen-units = 1
-debug = 2
-debug-assertions = true
-incremental = false
-opt-level = 's'
-overflow-checks = true
-
-# cargo test --release
-[profile.bench]
-codegen-units = 1
-debug = 2
-debug-assertions = false
-incremental = false
-lto = 'fat'
-opt-level = 's'
