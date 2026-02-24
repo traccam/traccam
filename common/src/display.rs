@@ -69,7 +69,7 @@ where
     Image::new(&if state.display_tz == DisplayTZ::Utc {UTC_90DEG } else { LOC_90DEG }, Point::new(0, 21)).draw(display).unwrap();
     match state.hdop {
         2.0..5.0 => {
-            draw_16_16("MOD", "FIX", Point::new(54,0), false, display);
+            draw_16_16("OKY", "FIX", Point::new(54,0), false, display);
         }
         5.0..20.0 => {
             draw_16_16("BAD", "FIX", Point::new(54,0), false, display);
