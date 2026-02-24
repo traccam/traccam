@@ -62,15 +62,29 @@ where
         state.now().with_timezone(&FixedOffset::east_opt(0).expect("Infallible. UTC."))
     };
     // Clock
-    Text::with_baseline(&heapless::format!(30; " {:02}:{:02}:{:02}", now.hour(), now.minute(), now.second()).unwrap(), Point::new(0, yoffs(2)), TXT.build(), Baseline::Top)
+    Text::with_baseline(&heapless::format!(30; " {:02}:{:02}:{:02}", now.hour(), now.minute(), now.second()).unwrap(), Point::new(0, yoffs(2) + 1), TXT.font(&FONT_6X13_BOLD).build(), Baseline::Top)
         .draw(display)
         .unwrap();
 
     Image::new(&if state.display_tz == DisplayTZ::Utc {UTC_90DEG } else { LOC_90DEG }, Point::new(0, 21)).draw(display).unwrap();
-    draw_16_16("NO", "FIX", Point::new(54,0), blink, display);
-    draw_16_16("BAD", "FIX", Point::new(54,16), blink, display);
-    draw_16_16("NO", "PPS", Point::new(54 + 16,0), blink, display);
-    draw_16_16("BAD", "PPS", Point::new(54 + 16,16), blink, display);
+    match state.hdop {
+        2.0..5.0 => {
+            draw_16_16("MOD", "FIX", Point::new(54,0), false, display);
+        }
+        5.0..20.0 => {
+            draw_16_16("BAD", "FIX", Point::new(54,0), false, display);
+        }
+        20.0.. => {
+            draw_16_16("NO", "FIX", Point::new(54,0), blink, display);
+        }
+        _ => {
+            // Good fix, ignore
+        }
+    }
+
+    // draw_16_16("BAD", "FIX", Point::new(54,16), blink, display);
+    // draw_16_16("NO", "PPS", Point::new(54 + 16,0), blink, display);
+    // draw_16_16("BAD", "PPS", Point::new(54 + 16,16), blink, display);
 }
 
 pub fn draw_16_16<D>(l1: &str, l2: &str, top_left: Point, blink: bool, display: &mut D)
@@ -127,7 +141,7 @@ pub mod simulator {
                 lat: self.rng.f64() * 60.0,
                 lon: self.rng.f64() * 60.0,
                 sats: self.rng.u8(0..99),
-                hdop: 99.0,
+                hdop: self.rng.f32() * 20.0,
             }
         }
     }
