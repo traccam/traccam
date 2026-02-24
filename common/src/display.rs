@@ -1,6 +1,6 @@
 use chrono::{FixedOffset, Timelike};
 use core::fmt::Debug;
-use std::cmp::{max, min};
+use core::cmp::min;
 use embedded_graphics::Drawable;
 use embedded_graphics::geometry::Size;
 use embedded_graphics::image::{Image, ImageRaw};
@@ -90,7 +90,7 @@ where
             .unwrap();
     }
 
-    let center_point = top_left + Point::new(8, 1);
+    let center_point = top_left + Point::new(7, 2);
 
     let text_style = TextStyleBuilder::new()
         .alignment(Alignment::Center)
@@ -100,7 +100,7 @@ where
     Text::with_text_style(
         &heapless::format!(7; "{}\n{}", &l1[..min(l1.len(), 3)], &l2[..min(l2.len(), 3)]).unwrap(),
         center_point,
-        MonoTextStyleBuilder::new().font(&FONT_5X7).text_color(if blink { BinaryColor::On } else { BinaryColor::Off }).build(),
+        MonoTextStyleBuilder::new().font(&FONT_4X6).text_color(if blink { BinaryColor::On } else { BinaryColor::Off }).build(),
         text_style,
     )
         .draw(display)
