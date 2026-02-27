@@ -1,7 +1,6 @@
 use chrono::{FixedOffset, Timelike};
 use core::fmt::Debug;
 use core::cmp::min;
-use std::cmp::PartialEq;
 use embedded_graphics::Drawable;
 use embedded_graphics::geometry::Size;
 use embedded_graphics::image::{Image, ImageRaw};
