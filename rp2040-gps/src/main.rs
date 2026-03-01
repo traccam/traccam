@@ -53,7 +53,7 @@ async fn main(spawner: Spawner) {
 
     let uart_rx = BufferedUartRx::new(p.UART0, Irqs, p.PIN_1, &mut rx_buf, config);
     spawner.spawn(do_nmea_decode(uart_rx)).unwrap();
-
+    Timer::after_secs(100000000).await;
 }
 
 #[embassy_executor::task]
