@@ -51,15 +51,20 @@ async fn main(spawner: Spawner) {
 
     let mut rx_buf = [0u8; 4096];
 
-    let mut uart_rx = BufferedUartRx::new(p.UART0, Irqs, p.PIN_1, &mut rx_buf, config);
+    let uart_rx = BufferedUartRx::new(p.UART0, Irqs, p.PIN_1, &mut rx_buf, config);
+    spawner.spawn(do_nmea_decode(uart_rx)).unwrap();
 
+}
+
+#[embassy_executor::task]
+async fn do_nmea_decode(mut uart: BufferedUartRx) {
     let mut nmea = Nmea::default();
     let mut buffer: String<128> = String::new();
 
     loop {
         let mut byte = [0u8; 1];
 
-        match embedded_io_async::Read::read(&mut uart_rx, &mut byte).await {
+        match embedded_io_async::Read::read(&mut uart, &mut byte).await {
             Ok(_b) => {
                 let b = byte[0] as char;
 
