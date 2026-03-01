@@ -8,6 +8,7 @@ use embedded_graphics::prelude::{DrawTarget};
 use embedded_graphics::pixelcolor::BinaryColor;
 use ssd1306::{I2CDisplayInterface, Ssd1306};
 use defmt::*;
+use defmt::todo;
 use defmt::export::display;
 use ssd1306::prelude::*;
 use defmt_rtt as _;
@@ -17,7 +18,7 @@ use embassy_executor::Spawner;
 use embassy_rp::{bind_interrupts, i2c, spi, Peri, Peripherals};
 use embassy_rp::gpio::{Level, Output};
 use embassy_rp::i2c::{Async, I2c};
-use embassy_rp::peripherals::{I2C1, PIN_2, PIN_3, PIN_4, PIN_5, PIN_6, PIN_7, SPI0, UART0};
+use embassy_rp::peripherals::{DMA_CH0, DMA_CH1, DMA_CH2, I2C1, PIN_2, PIN_3, PIN_4, PIN_5, PIN_6, PIN_7, SPI0, UART0};
 use embassy_rp::spi::Spi;
 use embassy_rp::uart::{BufferedUartRx, BufferedInterruptHandler};
 use embassy_rp::uart;
@@ -39,7 +40,7 @@ async fn main(spawner: Spawner) {
     info!("Hi");
     let p = embassy_rp::init(Default::default());
 
-    spawner.spawn(do_sd_card(p.SPI0, p.PIN_4, p.PIN_5, p.PIN_2, p.PIN_3)).unwrap();
+    spawner.spawn(do_sd_card(p.SPI0, p.PIN_4, p.PIN_5, p.PIN_2, p.PIN_3, p.DMA_CH0, p.DMA_CH1)).unwrap();
 
     let mut i2cc = i2c::Config::default();
     i2cc.frequency = 400_000;
@@ -116,17 +117,27 @@ impl TimeSource for DummyClock {
 }
 
 #[embassy_executor::task]
-async fn do_sd_card(spi: Peri<'static, SPI0>, miso: Peri<'static, PIN_4>, cs_pin: Peri<'static, PIN_5>, clk: Peri<'static, PIN_2>, mosi: Peri<'static, PIN_3>) {
+async fn do_sd_card(
+    spi: Peri<'static, SPI0>,
+    miso: Peri<'static, PIN_4>,
+    cs_pin: Peri<'static, PIN_5>,
+    clk: Peri<'static, PIN_2>,
+    mosi: Peri<'static, PIN_3>,
+    tx_dma: Peri<'static, DMA_CH0>,
+    rx_dma: Peri<'static, DMA_CH1>,
+) {
     let mut cs = Output::new(cs_pin, Level::High);
 
     let mut spi_config = spi::Config::default();
     spi_config.frequency = 10_000_000;
 
-    let spi_bus = Spi::new_blocking(
+    let spi_bus = Spi::new(
         spi,
         clk,
         mosi,
         miso,
+        tx_dma,
+        rx_dma,
         spi_config,
     );
 
@@ -142,21 +153,27 @@ async fn do_sd_card(spi: Peri<'static, SPI0>, miso: Peri<'static, PIN_4>, cs_pin
     let mut volume0 = volume_mgr.open_volume(VolumeIdx(0)).unwrap();
     let mut root_dir = volume0.open_root_dir().unwrap();
 
-    let mut my_file = root_dir.open_file_in_dir("TEST.TXT", Mode::ReadWriteAppend).unwrap();
+    let mut my_file = root_dir.open_file_in_dir("TEST.TXT", Mode::ReadWriteTruncate).unwrap();
+    // let before_size = my_file.length();
 
+    // for _ in 0..10 {
+    //     let start = Instant::now();
+    //     my_file.write(&[b'a'; 8096]).unwrap();
+    //     info!("{}", start.elapsed().as_millis());
+    //     Timer::after_secs(1).await;
+    // }
+    // info!("Before:{} After:{} Correct:{}", before_size, my_file.length(), before_size + 10 * 8096 == my_file.length());
     // let start = Instant::now();
-    // my_file.write(&[b'a'; 512]).unwrap();
-    // info!("{}", start.elapsed().as_millis());
+    // let mut sum = 0;
     // while !my_file.is_eof() {
     //     let mut buffer = [0u8; 32];
     //     let num_read = my_file.read(&mut buffer).unwrap();
     //
     //     // Convert raw bytes to a UTF-8 string so defmt can print it to the terminal
     //     let text_chunk = core::str::from_utf8(&buffer[..num_read]).unwrap();
-    //
-    //     // Print the chunk (defmt might add newlines per chunk, but it gets the data out)
-    //     info!("{}", text_chunk);
+    //     sum += text_chunk.len();
     // }
+    // info!("{} sum: {}", start.elapsed().as_millis(), sum);
 
     my_file.close().unwrap();
     root_dir.close().unwrap();
@@ -169,7 +186,7 @@ async fn do_display(i2c: I2c<'static, I2C1, Async>) {
     let mut display = Ssd1306::new(
         interface,
         DisplaySize128x32,
-        DisplayRotation::Rotate0,
+        DisplayRotation::Rotate180,
     ).into_buffered_graphics_mode();
     display.init().unwrap();
 
