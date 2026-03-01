@@ -63,7 +63,7 @@ where
         .unwrap();
 
     Image::new(&if state.display_tz == DisplayTZ::Utc {UTC_90DEG } else { LOC_90DEG }, Point::new(0, 21)).draw(display).unwrap();
-    match 0.0 {
+    match state.hdop {
         0.1..2.0 => {
             draw_16_16("EXC", "FIX", Point::new(54,0), BoxLevel::Info, display, blink);
         }
@@ -77,7 +77,7 @@ where
             draw_16_16("NO", "FIX", Point::new(54,0), BoxLevel::Error, display, blink);
         }
         _ => {
-            // Shouldn't happen
+            draw_16_16("???", "FIX", Point::new(54,0), BoxLevel::Error, display, blink);
         }
     }
 
