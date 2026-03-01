@@ -3,7 +3,7 @@
 
 use embedded_hal_bus::spi::ExclusiveDevice;
 use traccam_common::display::draw_status_display;
-use traccam_common::DisplayState;
+use traccam_common::{DisplayState};
 use embedded_graphics::prelude::{DrawTarget};
 use embedded_graphics::pixelcolor::BinaryColor;
 use ssd1306::{I2CDisplayInterface, Ssd1306};
@@ -25,10 +25,11 @@ use embassy_rp::uart;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_time::{Instant, Timer};
 use heapless::{String};
-use nmea::Nmea;
+use nmea::{parse_nmea_sentence, Nmea, SentenceType};
 use embassy_sync::signal::Signal;
 use embedded_sdmmc::{Mode, SdCard, TimeSource, Timestamp, VolumeIdx, VolumeManager};
 use embassy_time::Delay;
+use nmea::sentences::{parse_zda, ZdaData};
 
 bind_interrupts!(struct Irqs {
     UART0_IRQ => BufferedInterruptHandler<UART0>;
@@ -91,6 +92,11 @@ async fn do_nmea_decode(mut uart: BufferedUartRx) {
 
                         if let Some(hdop) = nmea.hdop() {
                             state.hdop = hdop;
+                        }
+
+                        if mtype == SentenceType::ZDA {
+                            let zda = parse_zda(parse_nmea_sentence(buffer.as_str()).unwrap()).unwrap();
+                            state.local_time = Some(zda.local_date_time().unwrap());
                         }
 
                         DISPLAY_SIGNAL.signal(state);

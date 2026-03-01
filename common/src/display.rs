@@ -13,7 +13,7 @@ use embedded_graphics::prelude::Point;
 use embedded_graphics::primitives::{PrimitiveStyle, Rectangle};
 use embedded_graphics::text::{Alignment, Baseline, TextStyleBuilder};
 use embedded_graphics::text::Text;
-use crate::{DisplayState, DisplayTZ};
+use crate::{DisplayState};
 
 pub fn draw_status_display<D>(display: &mut D, state: &DisplayState)
 where
@@ -28,6 +28,8 @@ where
         let neg_margin = 2;
         -neg_margin + (GPS_FONT.character_size.height as i32 - neg_margin) * i as i32
     }
+
+    let mut local_instead_of_utc = true;
 
     display.clear(BinaryColor::Off).unwrap();
     let blink = state.time.second() % 2 == 1;
@@ -52,17 +54,19 @@ where
     .draw(display)
     .unwrap();
 
-    let now = if let DisplayTZ::Local {fixed_offset} = state.display_tz {
-        state.now().with_timezone(&fixed_offset)
+    let now = if local_instead_of_utc && let Some(time) = state.now_local() {
+        // Fall back to UTC when LOC is not available (yet)
+        local_instead_of_utc = false;
+        time
     } else {
-        state.now().with_timezone(&FixedOffset::east_opt(0).expect("Infallible. UTC."))
+        state.now_utc()
     };
     // Clock
     Text::with_baseline(&heapless::format!(30; " {:02}:{:02}:{:02}", now.hour(), now.minute(), now.second()).unwrap(), Point::new(0, yoffs(2) + 1), TXT.font(&FONT_6X13_BOLD).build(), Baseline::Top)
         .draw(display)
         .unwrap();
 
-    Image::new(&if state.display_tz == DisplayTZ::Utc {UTC_90DEG } else { LOC_90DEG }, Point::new(0, 21)).draw(display).unwrap();
+    Image::new(&if local_instead_of_utc {LOC_90DEG } else { UTC_90DEG }, Point::new(0, 21)).draw(display).unwrap();
     match state.hdop {
         0.1..2.0 => {
             draw_16_16("EXC", "FIX", Point::new(54,0), BoxLevel::Info, display, blink);

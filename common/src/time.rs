@@ -1,4 +1,4 @@
-use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+use chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use crate::DisplayState;
 
 impl DisplayState {
@@ -12,7 +12,11 @@ impl DisplayState {
 		self.time = t;
 	}
 
-	pub fn now(&self) -> DateTime<Utc> {
-		DateTime::from_naive_utc_and_offset(NaiveDateTime::new(self.date, self.time), Utc)
+	pub fn now_utc(&self) -> DateTime<FixedOffset> {
+		DateTime::<Utc>::from_naive_utc_and_offset(NaiveDateTime::new(self.date, self.time), Utc).with_timezone(&FixedOffset::east_opt(0).expect("Infallible. UTC."))
+	}
+
+	pub fn now_local(&self) -> Option<DateTime<FixedOffset>> {
+		self.local_time
 	}
 }
