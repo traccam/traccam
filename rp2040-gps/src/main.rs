@@ -22,7 +22,7 @@ use embassy_rp::spi::Spi;
 use embassy_rp::uart::{BufferedUartRx, BufferedInterruptHandler};
 use embassy_rp::uart;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_time::Timer;
+use embassy_time::{Instant, Timer};
 use heapless::{String};
 use nmea::Nmea;
 use embassy_sync::signal::Signal;
@@ -142,18 +142,21 @@ async fn do_sd_card(spi: Peri<'static, SPI0>, miso: Peri<'static, PIN_4>, cs_pin
     let mut volume0 = volume_mgr.open_volume(VolumeIdx(0)).unwrap();
     let mut root_dir = volume0.open_root_dir().unwrap();
 
-    let mut my_file = root_dir.open_file_in_dir("TEST.TXT", Mode::ReadOnly).unwrap();
+    let mut my_file = root_dir.open_file_in_dir("TEST.TXT", Mode::ReadWriteAppend).unwrap();
 
-    while !my_file.is_eof() {
-        let mut buffer = [0u8; 32];
-        let num_read = my_file.read(&mut buffer).unwrap();
-
-        // Convert raw bytes to a UTF-8 string so defmt can print it to the terminal
-        let text_chunk = core::str::from_utf8(&buffer[..num_read]).unwrap();
-
-        // Print the chunk (defmt might add newlines per chunk, but it gets the data out)
-        info!("{}", text_chunk);
-    }
+    // let start = Instant::now();
+    // my_file.write(&[b'a'; 512]).unwrap();
+    // info!("{}", start.elapsed().as_millis());
+    // while !my_file.is_eof() {
+    //     let mut buffer = [0u8; 32];
+    //     let num_read = my_file.read(&mut buffer).unwrap();
+    //
+    //     // Convert raw bytes to a UTF-8 string so defmt can print it to the terminal
+    //     let text_chunk = core::str::from_utf8(&buffer[..num_read]).unwrap();
+    //
+    //     // Print the chunk (defmt might add newlines per chunk, but it gets the data out)
+    //     info!("{}", text_chunk);
+    // }
 
     my_file.close().unwrap();
     root_dir.close().unwrap();

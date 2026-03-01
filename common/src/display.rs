@@ -64,7 +64,7 @@ where
 
     Image::new(&if state.display_tz == DisplayTZ::Utc {UTC_90DEG } else { LOC_90DEG }, Point::new(0, 21)).draw(display).unwrap();
     match 0.0 {
-        ..2.0 => {
+        0.1..2.0 => {
             draw_16_16("EXC", "FIX", Point::new(54,0), BoxLevel::Info, display, blink);
         }
         2.0..5.0 => {
@@ -73,11 +73,11 @@ where
         5.0..20.0 => {
             draw_16_16("POR", "FIX", Point::new(54,0), BoxLevel::Warn, display, blink);
         }
-        20.0.. => {
+        20.0.. | 0.0 => {
             draw_16_16("NO", "FIX", Point::new(54,0), BoxLevel::Error, display, blink);
         }
         _ => {
-            // Good fix, ignore
+            // Shouldn't happen
         }
     }
 
@@ -98,7 +98,6 @@ where
     D: DrawTarget<Color = BinaryColor>,
     D::Error: Debug,
 {
-    let level = BoxLevel::Info;
 
     let (fill_color, text_color) = match level {
         BoxLevel::Info => (BinaryColor::Off, BinaryColor::On),
