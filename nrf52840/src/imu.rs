@@ -86,9 +86,7 @@ impl Imu {
 		let (to_read, overrun) = self.fifo_status().await;
 		let data = self.read_raw_samples().await;
 
-		if overrun {
-			panic!("FIFO overrun!");
-		}
+		defmt::assert!(!overrun, "FIFO overrun!");
 		defmt::assert!(to_read < out.capacity(), "Outvec overrun!");
 
 		for chunk in data[..to_read].chunks_exact(12) {
