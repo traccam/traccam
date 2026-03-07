@@ -20,7 +20,12 @@ bind_interrupts!(struct Irqs {
 
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
-    let p = embassy_nrf::init(Default::default());
+    let mut config = embassy_nrf::config::Config::default();
+    // Use LXFO to prevent time drift for gyro logs and HFXO for reliable SPI/I2C and DMA
+    config.lfclk_source = embassy_nrf::config::LfclkSource::ExternalXtal;
+    config.hfclk_source = embassy_nrf::config::HfclkSource::ExternalXtal;
+
+    let p = embassy_nrf::init(config);
 
     let mut led = Output::new(p.P0_13, Level::Low, OutputDrive::Standard);
 
