@@ -34,7 +34,15 @@ const INT1_CTRL: u8 = 0x0D;
 const CTRL1_XL: u8 = 0x10;
 const CTRL2_G: u8 = 0x11;
 
+// Size of the FIFO buffer on the IMU
+const FIFO_BUFSIZE: usize = 4096;
+
+// IMU onboard memory holds 4096 byte / (6 * 16 bit) = 341 samples
+// At 1.66kHz we have to empty the FIFO 6.64kHz aka every 150.6 ms
+// This means we can miss our readout target by at most 54.8ms
 const WATERMARK_LIMIT: u8 = 250;
+// Absolute maximum amount of samples that fit into 4096 byte buffer on the IMU
+const FIFO_MAX_SAMPLES: usize = 341;
 
 impl Imu {
 	pub async fn init(
@@ -63,17 +71,17 @@ impl Imu {
 
 		Self {
 			res,
-			fifo_buf: [0_u8; 4096],
+			fifo_buf: [0_u8; FIFO_BUFSIZE],
 		}
 	}
 
-	pub async fn read_raw_samples(&mut self) -> &[u8; 4096] {
+	pub async fn read_raw_samples(&mut self) -> &[u8; FIFO_BUFSIZE] {
 		let ram_reg = [REG_FIFO_DATA_OUT_L];
 		self.res.imu_i2c.write_read(IMU_ADDR, &ram_reg, &mut self.fifo_buf).await.unwrap();
 		&self.fifo_buf
 	}
 
-	pub async fn read_samples(&mut self, out: &mut Vec<Sample, 1000>) {
+	pub async fn read_samples(&mut self, out: &mut Vec<Sample, FIFO_MAX_SAMPLES>) {
 		out.clear();
 		let (to_read, overrun) = self.fifo_status().await;
 		let data = self.read_raw_samples().await;
