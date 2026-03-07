@@ -37,12 +37,15 @@ const CTRL2_G: u8 = 0x11;
 // Size of the FIFO buffer on the IMU
 const FIFO_BUFSIZE: usize = 4096;
 
+// A "Sample" is Accel[3] + Gyro[3] = 6 * i16 = 12 bytes
+const BYTES_PER_SAMPLE: usize = 12;
+
 // IMU onboard memory holds 4096 byte / (6 * 16 bit) = 341 samples
 // At 1.66kHz we have to empty the FIFO 6.64kHz aka every 150.6 ms
 // This means we can miss our readout target by at most 54.8ms
-const WATERMARK_LIMIT: u8 = 250;
+const WATERMARK_LIMIT: u8 = 250; // Amount of words
 // Absolute maximum amount of samples that fit into 4096 byte buffer on the IMU
-const FIFO_MAX_SAMPLES: usize = 341;
+const FIFO_MAX_SAMPLES: usize = FIFO_BUFSIZE / BYTES_PER_SAMPLE;
 
 impl Imu {
 	pub async fn init(
@@ -81,7 +84,7 @@ impl Imu {
 		&self.fifo_buf
 	}
 
-	pub async fn read_samples(&mut self, out: &mut Vec<Sample, FIFO_MAX_SAMPLES>) {
+	pub async fn read_samples(&mut self, out: &mut Vec<Sample, { FIFO_MAX_SAMPLES + 200 /* Somehow max_samples isnt enough. I Suspect its an issue with FIFO filling while emptying */ }>) {
 		out.clear();
 		let (to_read, overrun) = self.fifo_status().await;
 		let data = self.read_raw_samples().await;
