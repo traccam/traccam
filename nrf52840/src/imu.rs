@@ -23,7 +23,6 @@ pub struct ImuRessources {
 pub struct Imu {
 	res: ImuRessources,
 	fifo_buf: [u8; 4096],
-	i2c_buf: [u8; 4096],
 }
 
 const FIFO_CTRL3: u8 = 0x08;
@@ -65,7 +64,6 @@ impl Imu {
 		Self {
 			res,
 			fifo_buf: [0_u8; 4096],
-			i2c_buf: [0_u8; 4096],
 		}
 	}
 
