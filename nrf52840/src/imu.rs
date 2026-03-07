@@ -54,14 +54,14 @@ impl Imu {
 		Timer::after_millis(5).await;
 
 		let cmds = [
-			[CTRL3_C, 0b01000100], //    BDU=1, IF_INC=1
+			[CTRL3_C, 0b01000100], //         BDU=1, IF_INC=1
 			[FIFO_CTRL1, WATERMARK_LIMIT], // Watermark LSB
-			[FIFO_CTRL2, 0x00], //       Watermark MSB = 0
-			[FIFO_CTRL3, 0b00001001], // No decimation
-			[FIFO_CTRL5, 0b01000110], // 1.66kHz, Continuous mode
-			[INT1_CTRL, 0b00011000], //  Route FIFO threshold  and overrun to INT1
-			[CTRL1_XL, 0b10000000], //   Accel 1.66kHz, 2g
-			[CTRL2_G, 0b10000000], //    Gyro 1.66kHz, 250dps
+			[FIFO_CTRL2, 0x00], //            Watermark MSB = 0
+			[FIFO_CTRL3, 0b00001001], //      No decimation
+			[FIFO_CTRL5, 0b01000110], //      1.66kHz, Continuous mode
+			[INT1_CTRL, 0b00011000], //       Route FIFO threshold  and overrun to INT1
+			[CTRL1_XL, 0b10000000], //        Accel 1.66kHz, 2g
+			[CTRL2_G, 0b10000000], //         Gyro 1.66kHz, 250dps
 		];
 
 		for cmd in cmds {
