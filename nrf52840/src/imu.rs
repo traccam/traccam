@@ -76,7 +76,7 @@ impl Imu {
 	}
 
 	pub async fn read_raw_samples(&mut self) -> &[u8; FIFO_BUFSIZE] {
-		let ram_reg = [REG_FIFO_DATA_OUT_L];
+		let ram_reg = [REG_FIFO_DATA_OUT_L]; // DO NOT INLINE!!! DMA requires this in RAM
 		self.res.imu_i2c.write_read(IMU_ADDR, &ram_reg, &mut self.fifo_buf).await.unwrap();
 		&self.fifo_buf
 	}
@@ -123,6 +123,7 @@ impl Imu {
 
 	pub async fn fifo_status(&mut self) -> (usize, bool) {
 		let mut status = [0u8; 2];
+		// DO NOT INLINE!!! DMA requires this in RAM
 		let ram_reg = [0x3A]; // FIFO_STATUS1 (0x3A) and FIFO_STATUS2 (0x3B)
 
 		self.res.imu_i2c.write_read(IMU_ADDR, &ram_reg, &mut status).await.unwrap();
