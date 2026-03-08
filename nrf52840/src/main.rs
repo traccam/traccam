@@ -3,32 +3,56 @@
 
 mod imu;
 
-use defmt::{error, info};
-use embassy_executor::Spawner;
+use embedded_sdmmc::VolumeIdx;
+use embedded_sdmmc::Timestamp;
+use embedded_sdmmc::TimeSource;
+use embedded_sdmmc::VolumeManager;
+use embedded_sdmmc::SdCard;
+use embassy_time::Delay;
+use core::fmt::Write;
+use embedded_hal_bus::spi::ExclusiveDevice;
+use defmt::{debug, error, info};
+use embassy_executor::{InterruptExecutor, Spawner};
+use embassy_futures::yield_now;
 use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
 use embassy_nrf::gpiote::{InputChannel, InputChannelPolarity};
 use embassy_nrf::twim::{self, Twim};
-use embassy_nrf::bind_interrupts;
+use embassy_nrf::{bind_interrupts, interrupt, spim, Peri};
+use embassy_nrf::interrupt::Priority;
+use embassy_nrf::peripherals::{P0_13, P0_26, P0_29};
+use embassy_nrf::spim::Spim;
+use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex};
+use embassy_sync::channel::{Channel, Receiver, Sender};
+use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant, Timer};
-use heapless::Vec;
+use heapless::{String, Vec};
 use {defmt_rtt as _, panic_probe as _};
-use crate::imu::{Imu, ImuRessources};
+use crate::imu::{Imu, ImuRessources, Sample};
+use embassy_nrf::interrupt::InterruptExt;
+
+static EXECUTOR_RT: InterruptExecutor = InterruptExecutor::new();
+
+#[interrupt]
+unsafe fn EGU1_SWI1() {
+    EXECUTOR_RT.on_interrupt()
+}
 
 bind_interrupts!(struct Irqs {
     TWISPI0 => twim::InterruptHandler<embassy_nrf::peripherals::TWISPI0>;
+    TWISPI1 => spim::InterruptHandler<embassy_nrf::peripherals::TWISPI1>;
 });
 
 #[embassy_executor::main]
-async fn main(_spawner: Spawner) {
+async fn main(spawner: Spawner) {
     let mut config = embassy_nrf::config::Config::default();
     // Use LXFO to prevent time drift for gyro logs and HFXO for reliable SPI/I2C and DMA
-    config.lfclk_source = embassy_nrf::config::LfclkSource::ExternalXtal;
-    config.hfclk_source = embassy_nrf::config::HfclkSource::ExternalXtal;
+    // config.lfclk_source = embassy_nrf::config::LfclkSource::ExternalXtal;
+    // config.hfclk_source = embassy_nrf::config::HfclkSource::ExternalXtal;
 
     let p = embassy_nrf::init(config);
 
-    let mut led = Output::new(p.P0_13, Level::Low, OutputDrive::Standard);
-
+    interrupt::EGU1_SWI1.set_priority(Priority::P1);
+    let rt_spawner = EXECUTOR_RT.start(interrupt::EGU1_SWI1);
 
     let resources = ImuRessources::new(
         p.P1_08,
@@ -38,10 +62,52 @@ async fn main(_spawner: Spawner) {
         p.P0_07,
         p.P0_27,
     );
+
+    info!("Spawning tasks");
+    let _ = spawner.spawn(sample_task(p.P0_26, resources)).unwrap();
+    IMU_READY.wait().await;
+
+    let cs = Output::new(p.P0_29, Level::High, OutputDrive::Standard);
+
+    let mut spi_config = spim::Config::default();
+    spi_config.frequency = spim::Frequency::M8;
+
+    let spi_bus = Spim::new(
+        p.TWISPI1,
+        Irqs,
+        p.P1_13,
+        p.P1_14,
+        p.P1_15,
+        spi_config,
+    );
+
+    let spi_device = ExclusiveDevice::new(spi_bus, cs, Delay).unwrap();
+
+    let _ = spawner.spawn(do_sd_card(spi_device)).unwrap();
+    info!("Spawned tasks");
+
+    // Softhalt
+    loop {
+        Timer::after_secs(100).await;
+    }
+}
+
+static SAMPLES_CHANNEL: Channel<CriticalSectionRawMutex, Vec<Sample, 541>, 3> = Channel::new();
+static COMPLETE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+static IMU_READY: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+
+#[embassy_executor::task]
+async fn sample_task(power_led: Peri<'static, P0_26>, resources: ImuRessources) {
+    let mut led = Output::new(power_led, Level::Low, OutputDrive::Standard);
+
+    info!("Initializing IMU");
     let mut imu = Imu::init(resources).await;
+    info!("IMU ready");
+    IMU_READY.signal(());
+    let sender = SAMPLES_CHANNEL.sender();
 
-    let mut last_print = Instant::now();
-
+    let start = Instant::now();
+    info!("Started sampling");
     loop {
         imu.data_interrupt().await;
 
@@ -49,22 +115,62 @@ async fn main(_spawner: Spawner) {
 
         let mut samples = Vec::new();
         imu.read_samples(&mut samples).await;
-
-        for sample in samples {
-            if last_print + Duration::from_millis(24) > Instant::now() {
-                continue
-            }
-            defmt::info!("\x1B[2J\x1B[H");
-            last_print = Instant::now();
-
-            info!("Accel (g):\n {}\n{}\n{}\nGyro (dps):\n {}\n{}\n{}\n", sample.a_x, sample.a_y, sample.a_z, sample.g_x, sample.g_y, sample.g_z);
-        }
+        sender.send(samples).await;
 
         led.set_low();
+        if start.elapsed().as_secs() >= 5 {
+            break
+        }
+    }
+    imu.poweroff();
+    COMPLETE.signal(());
+    info!("Completed sampling");
+}
+
+struct DummyClock;
+
+impl TimeSource for DummyClock {
+    fn get_timestamp(&self) -> Timestamp {
+        // Returns a dummy date: Jan 1, 2024, 00:00:00
+        Timestamp::from_calendar(2026, 3, 8, 0, 0, 0).unwrap()
+    }
+}
+
+#[embassy_executor::task]
+async fn do_sd_card(spi_device: ExclusiveDevice<Spim<'static, >, Output<'static>, Delay>) {
+    let mut sdcard = SdCard::new(spi_device, Delay);
+
+    let s = sdcard.num_bytes().unwrap();
+    info!("SD card is {} bytes", s);
+
+    let mut volume_mgr = VolumeManager::new(sdcard, DummyClock);
+    let mut volume0 = volume_mgr.open_volume(VolumeIdx(0)).unwrap();
+    let mut root_dir = volume0.open_root_dir().unwrap();
+
+    let mut my_file = root_dir.open_file_in_dir("TEST.TXT", embedded_sdmmc::Mode::ReadWriteCreateOrTruncate).unwrap();
+
+    let r = SAMPLES_CHANNEL.receiver();
+    loop {
+        if r.is_empty() && COMPLETE.signaled() {
+            break;
+        }
+        let samples = r.receive().await;
+        let mut line = String::<128>::new();
+        for sample in samples {
+            line.clear();
+            write!(
+                line,
+                "{},{},{},{},{},{},{}\n",
+                Instant::now().as_micros(),
+                sample.g_x, sample.g_y, sample.g_z,
+                sample.a_x, sample.a_y, sample.a_z
+            ).unwrap();
+            my_file.write(line.as_bytes()).unwrap();
+            yield_now().await;
+        }
     }
 
-    // Softhalt
-    loop {
-        Timer::after_secs(100).await;
-    }
+    my_file.close().unwrap();
+    root_dir.close().unwrap();
+    info!("Completed writing");
 }

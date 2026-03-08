@@ -1,5 +1,5 @@
 use heapless::Vec;
-use defmt::{error, info};
+use defmt::{debug, error, info};
 use embassy_nrf::{twim, Peri, Peripherals};
 use embassy_nrf::gpio::{Level, Output, OutputDrive, Pull};
 use embassy_nrf::gpiote::{InputChannel, InputChannelPolarity};
