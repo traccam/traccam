@@ -92,6 +92,8 @@ async fn main(spawner: Spawner) {
     }
 }
 
+
+// TODO: Use ringbuffer or something, this explodes the stack
 static SAMPLES_CHANNEL: Channel<CriticalSectionRawMutex, Vec<Sample, 541>, 3> = Channel::new();
 static COMPLETE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 static IMU_READY: Signal<CriticalSectionRawMutex, ()> = Signal::new();
@@ -113,6 +115,7 @@ async fn sample_task(power_led: Peri<'static, P0_26>, resources: ImuRessources) 
 
         led.set_high();
 
+        // TODO: Stackbomb, use global ringbuf
         let mut samples = Vec::new();
         imu.read_samples(&mut samples).await;
         sender.send(samples).await;
@@ -154,6 +157,7 @@ async fn do_sd_card(spi_device: ExclusiveDevice<Spim<'static, >, Output<'static>
         if r.is_empty() && COMPLETE.signaled() {
             break;
         }
+        // TODO: Batch a few hundred samples and then batch write
         let samples = r.receive().await;
         let mut line = String::<128>::new();
         for sample in samples {
