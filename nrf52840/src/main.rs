@@ -34,7 +34,9 @@ static EXECUTOR_RT: InterruptExecutor = InterruptExecutor::new();
 
 #[interrupt]
 unsafe fn EGU1_SWI1() {
-    EXECUTOR_RT.on_interrupt()
+    unsafe {
+        EXECUTOR_RT.on_interrupt()
+    }
 }
 
 bind_interrupts!(struct Irqs {
@@ -46,8 +48,8 @@ bind_interrupts!(struct Irqs {
 async fn main(spawner: Spawner) {
     let mut config = embassy_nrf::config::Config::default();
     // Use LXFO to prevent time drift for gyro logs and HFXO for reliable SPI/I2C and DMA
-    // config.lfclk_source = embassy_nrf::config::LfclkSource::ExternalXtal;
-    // config.hfclk_source = embassy_nrf::config::HfclkSource::ExternalXtal;
+    config.lfclk_source = embassy_nrf::config::LfclkSource::ExternalXtal;
+    config.hfclk_source = embassy_nrf::config::HfclkSource::ExternalXtal;
 
     let p = embassy_nrf::init(config);
 
@@ -64,7 +66,7 @@ async fn main(spawner: Spawner) {
     );
 
     info!("Spawning tasks");
-    let _ = spawner.spawn(sample_task(p.P0_26, resources)).unwrap();
+    let _ = rt_spawner.spawn(sample_task(p.P0_26, resources)).unwrap();
     IMU_READY.wait().await;
 
     let cs = Output::new(p.P0_29, Level::High, OutputDrive::Standard);
@@ -93,14 +95,13 @@ async fn main(spawner: Spawner) {
 }
 
 
-// TODO: Use ringbuffer or something, this explodes the stack
-static SAMPLES_CHANNEL: Channel<CriticalSectionRawMutex, Vec<Sample, 541>, 3> = Channel::new();
+static SAMPLES_CHANNEL: Channel<CriticalSectionRawMutex, Sample, 1024> = Channel::new();
 static COMPLETE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 static IMU_READY: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 #[embassy_executor::task]
 async fn sample_task(power_led: Peri<'static, P0_26>, resources: ImuRessources) {
-    let mut led = Output::new(power_led, Level::Low, OutputDrive::Standard);
+    let mut led = Output::new(power_led, Level::High, OutputDrive::Standard);
 
     info!("Initializing IMU");
     let mut imu = Imu::init(resources).await;
@@ -110,17 +111,19 @@ async fn sample_task(power_led: Peri<'static, P0_26>, resources: ImuRessources) 
 
     let start = Instant::now();
     info!("Started sampling");
+    let mut samples = Vec::new();
     loop {
         imu.data_interrupt().await;
 
-        led.set_high();
-
-        // TODO: Stackbomb, use global ringbuf
-        let mut samples = Vec::new();
-        imu.read_samples(&mut samples).await;
-        sender.send(samples).await;
-
         led.set_low();
+
+        samples.clear();
+        imu.read_samples(&mut samples).await;
+        for sample in &samples {
+            sender.send(*sample).await;
+        }
+
+        led.set_high();
         if start.elapsed().as_secs() >= 5 {
             break
         }
@@ -157,10 +160,8 @@ async fn do_sd_card(spi_device: ExclusiveDevice<Spim<'static, >, Output<'static>
         if r.is_empty() && COMPLETE.signaled() {
             break;
         }
-        // TODO: Batch a few hundred samples and then batch write
-        let samples = r.receive().await;
+        let sample = r.receive().await;
         let mut line = String::<128>::new();
-        for sample in samples {
             line.clear();
             write!(
                 line,
@@ -171,7 +172,6 @@ async fn do_sd_card(spi_device: ExclusiveDevice<Spim<'static, >, Output<'static>
             ).unwrap();
             my_file.write(line.as_bytes()).unwrap();
             yield_now().await;
-        }
     }
 
     my_file.close().unwrap();

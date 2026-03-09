@@ -1,11 +1,11 @@
+use static_cell::{ConstStaticCell,};
 use heapless::Vec;
-use defmt::{debug, error, info};
-use embassy_nrf::{twim, Peri, Peripherals};
+use embassy_nrf::{twim, Peri,};
 use embassy_nrf::gpio::{Level, Output, OutputDrive, Pull};
 use embassy_nrf::gpiote::{InputChannel, InputChannelPolarity};
 use embassy_nrf::peripherals::{GPIOTE_CH0, P0_07, P0_11, P0_27, P1_08, TWISPI0};
 use embassy_nrf::twim::Twim;
-use embassy_time::{Duration, Instant, Timer};
+use embassy_time::{Timer};
 use crate::Irqs;
 
 /// Implementing the LSM6DS3TR-C IMU
@@ -51,10 +51,13 @@ impl Imu {
 	pub async fn init(
 		mut res: ImuRessources,
 	) -> Self {
+		// Ensure full reset and power discharge
+		res.power.set_low();
+		Timer::after_millis(200).await;
 		res.power.set_high();
 
-		// Let it boot, manual says 3ms
-		Timer::after_millis(5).await;
+		// Let it boot, manual says 3ms, but our power Rail takes up to 300ms to rise (minimum)
+		Timer::after_millis(500).await;
 
 		let cmds = [
 			[CTRL3_C, 0b01000100], //         BDU=1, IF_INC=1
@@ -68,8 +71,7 @@ impl Imu {
 		];
 
 		for cmd in cmds {
-			let ram_cmd = [cmd[0], cmd[1]]; // Forces the data onto the stack
-			res.imu_i2c.write(IMU_ADDR, &ram_cmd).await.unwrap();
+			res.imu_i2c.write(IMU_ADDR, &cmd).await.unwrap();
 		}
 
 		Self {
@@ -146,6 +148,9 @@ impl Imu {
 	}
 }
 
+
+static TX_BUFFER: ConstStaticCell<[u8; 512]> = ConstStaticCell::new([0_u8; 512]);
+
 impl ImuRessources {
 	pub fn new(
 		power_pin: Peri<'static, P1_08>,
@@ -155,10 +160,10 @@ impl ImuRessources {
 		sda: Peri<'static, P0_07>,
 		scl: Peri<'static, P0_27>,
 	) -> Self {
+		// IMU draws quite some power at start, we need to use HighDrive
+		let power = Output::new(power_pin, Level::Low, OutputDrive::HighDrive);
 
-		let power = Output::new(power_pin, Level::Low, OutputDrive::Standard);
-
-		let mut interrupt = InputChannel::new(
+		let interrupt = InputChannel::new(
 			gpiote,
 			int1_pin,
 			Pull::None,
@@ -168,13 +173,13 @@ impl ImuRessources {
 		let mut twim_config = twim::Config::default();
 		twim_config.frequency = twim::Frequency::K400;
 
-		let mut imu_i2c = Twim::new(
+		let imu_i2c = Twim::new(
 			twisp,
 			Irqs,
 			sda,
 			scl,
 			twim_config,
-			&mut [], // Only use ram-based commands until init completes!
+			TX_BUFFER.take(),
 		);
 
 		Self {
@@ -185,7 +190,7 @@ impl ImuRessources {
 	}
 }
 
-#[derive(Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct Sample {
 	pub g_x: f32,
 	pub g_y: f32,
