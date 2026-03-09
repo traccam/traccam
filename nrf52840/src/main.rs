@@ -145,12 +145,13 @@ async fn do_sd_card(spi_device: ExclusiveDevice<Spim<'static>, Output<'static>, 
             break;
         }
         let sample = r.receive().await;
+        // TODO: Bulk write ops here
         let mut line = String::<128>::new();
         line.clear();
         write!(
             line,
             "{},{},{},{},{},{},{}\n",
-            Instant::now().as_micros(),
+            Instant::now().as_micros(), //TODO: Use accurate systemd timing source here
             sample.g_x,
             sample.g_y,
             sample.g_z,
