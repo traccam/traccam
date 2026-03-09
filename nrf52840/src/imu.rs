@@ -47,6 +47,9 @@ const WATERMARK_LIMIT: u8 = 250; // Amount of words
 // Absolute maximum amount of samples that fit into 4096 byte buffer on the IMU
 const FIFO_MAX_SAMPLES: usize = FIFO_BUFSIZE / BYTES_PER_SAMPLE;
 
+const SAMPLE_FREQ: f32 = 1660.0;
+pub const SAMPLE_INTERVAL_MICROS: f32 = 1000000.0 / SAMPLE_FREQ;
+
 impl Imu {
     pub async fn init(mut res: ImuRessources) -> Self {
         // Ensure full reset and power discharge

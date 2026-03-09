@@ -3,8 +3,10 @@
 
 mod imu;
 
+use crate::imu::SAMPLE_INTERVAL_MICROS;
 use crate::imu::{Imu, ImuRessources, Sample};
 use core::fmt::Write;
+use core::ops::Add;
 use defmt::info;
 use embassy_executor::{InterruptExecutor, Spawner};
 use embassy_futures::yield_now;
@@ -18,7 +20,7 @@ use embassy_nrf::{Peri, bind_interrupts, interrupt, spim};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::signal::Signal;
-use embassy_time::Delay;
+use embassy_time::{Delay, Duration};
 use embassy_time::{Instant, Timer};
 use embedded_hal_bus::spi::ExclusiveDevice;
 use embedded_sdmmc::SdCard;
@@ -57,7 +59,7 @@ async fn main(spawner: Spawner) {
 
     info!("Spawning tasks");
     let _ = rt_spawner.spawn(sample_task(p.P0_26, resources)).unwrap();
-    IMU_READY.wait().await;
+    let start_of_sampling = IMU_READY.wait().await;
 
     let cs = Output::new(p.P0_29, Level::High, OutputDrive::Standard);
 
@@ -68,7 +70,9 @@ async fn main(spawner: Spawner) {
 
     let spi_device = ExclusiveDevice::new(spi_bus, cs, Delay).unwrap();
 
-    let _ = spawner.spawn(do_sd_card(spi_device)).unwrap();
+    let _ = spawner
+        .spawn(do_sd_card(spi_device, start_of_sampling))
+        .unwrap();
     info!("Spawned tasks");
 
     // Softhalt
@@ -79,7 +83,7 @@ async fn main(spawner: Spawner) {
 
 static SAMPLES_CHANNEL: Channel<CriticalSectionRawMutex, Sample, 1024> = Channel::new();
 static COMPLETE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
-static IMU_READY: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+static IMU_READY: Signal<CriticalSectionRawMutex, Instant> = Signal::new();
 
 #[embassy_executor::task]
 async fn sample_task(power_led: Peri<'static, P0_26>, resources: ImuRessources) {
@@ -88,7 +92,7 @@ async fn sample_task(power_led: Peri<'static, P0_26>, resources: ImuRessources) 
     info!("Initializing IMU");
     let mut imu = Imu::init(resources).await;
     info!("IMU ready");
-    IMU_READY.signal(());
+    IMU_READY.signal(Instant::now());
     let sender = SAMPLES_CHANNEL.sender();
 
     let start = Instant::now();
@@ -125,7 +129,10 @@ impl TimeSource for DummyClock {
 }
 
 #[embassy_executor::task]
-async fn do_sd_card(spi_device: ExclusiveDevice<Spim<'static>, Output<'static>, Delay>) {
+async fn do_sd_card(
+    spi_device: ExclusiveDevice<Spim<'static>, Output<'static>, Delay>,
+    start: Instant,
+) {
     let sdcard = SdCard::new(spi_device, Delay);
 
     let s = sdcard.num_bytes().unwrap();
@@ -136,30 +143,51 @@ async fn do_sd_card(spi_device: ExclusiveDevice<Spim<'static>, Output<'static>, 
     let root_dir = volume0.open_root_dir().unwrap();
 
     let my_file = root_dir
-        .open_file_in_dir("TEST.TXT", embedded_sdmmc::Mode::ReadWriteCreateOrTruncate)
+        .open_file_in_dir("LOG.GSV", embedded_sdmmc::Mode::ReadWriteCreateOrTruncate)
         .unwrap();
 
+    let header = r#"GYROFLOW IMU LOG
+version,1.3
+id,xiao_nrf52840
+orientation,XYZ
+tscale,0.000001
+gscale,0.0174532925
+ascale,1.0
+t,gx,gy,gz,ax,ay,az
+"#;
+
+    my_file.write(header.as_bytes()).unwrap();
+
+
     let r = SAMPLES_CHANNEL.receiver();
-    loop {
-        if r.is_empty() && COMPLETE.signaled() {
-            break;
-        }
-        let sample = r.receive().await;
-        // TODO: Bulk write ops here
-        let mut line = String::<128>::new();
+    let mut line = String::<1024>::new();
+    let mut sample_count = 0;
+
+    'outer: loop {
+
         line.clear();
-        write!(
-            line,
-            "{},{},{},{},{},{},{}\n",
-            Instant::now().as_micros(), //TODO: Use accurate systemd timing source here
-            sample.g_x,
-            sample.g_y,
-            sample.g_z,
-            sample.a_x,
-            sample.a_y,
-            sample.a_z
-        )
-        .unwrap();
+
+        for _ in 0..10 {
+            if r.is_empty() && COMPLETE.signaled() {
+                break 'outer;
+            }
+            let sample = r.receive().await;
+            let sample_time = start.add(Duration::from_micros((sample_count as f32 * SAMPLE_INTERVAL_MICROS) as u64));
+            write!(
+                line,
+                "{},{},{},{},{},{},{}\n",
+                sample_time.as_micros(),
+                sample.g_x,
+                sample.g_y,
+                sample.g_z,
+                sample.a_x,
+                sample.a_y,
+                sample.a_z
+            )
+            .unwrap();
+            sample_count += 1;
+            yield_now().await;
+        }
         my_file.write(line.as_bytes()).unwrap();
         yield_now().await;
     }
