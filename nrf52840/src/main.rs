@@ -3,40 +3,37 @@
 
 mod imu;
 
-use embedded_sdmmc::VolumeIdx;
-use embedded_sdmmc::Timestamp;
-use embedded_sdmmc::TimeSource;
-use embedded_sdmmc::VolumeManager;
-use embedded_sdmmc::SdCard;
-use embassy_time::Delay;
+use crate::imu::{Imu, ImuRessources, Sample};
 use core::fmt::Write;
-use embedded_hal_bus::spi::ExclusiveDevice;
-use defmt::{debug, error, info};
+use defmt::info;
 use embassy_executor::{InterruptExecutor, Spawner};
 use embassy_futures::yield_now;
-use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
-use embassy_nrf::gpiote::{InputChannel, InputChannelPolarity};
-use embassy_nrf::twim::{self, Twim};
-use embassy_nrf::{bind_interrupts, interrupt, spim, Peri};
+use embassy_nrf::gpio::{Level, Output, OutputDrive};
+use embassy_nrf::interrupt::InterruptExt;
 use embassy_nrf::interrupt::Priority;
-use embassy_nrf::peripherals::{P0_13, P0_26, P0_29};
+use embassy_nrf::peripherals::P0_26;
 use embassy_nrf::spim::Spim;
-use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex};
-use embassy_sync::channel::{Channel, Receiver, Sender};
+use embassy_nrf::twim::{self};
+use embassy_nrf::{Peri, bind_interrupts, interrupt, spim};
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::channel::Channel;
 use embassy_sync::signal::Signal;
-use embassy_time::{Duration, Instant, Timer};
+use embassy_time::Delay;
+use embassy_time::{Instant, Timer};
+use embedded_hal_bus::spi::ExclusiveDevice;
+use embedded_sdmmc::SdCard;
+use embedded_sdmmc::TimeSource;
+use embedded_sdmmc::Timestamp;
+use embedded_sdmmc::VolumeIdx;
+use embedded_sdmmc::VolumeManager;
 use heapless::{String, Vec};
 use {defmt_rtt as _, panic_probe as _};
-use crate::imu::{Imu, ImuRessources, Sample};
-use embassy_nrf::interrupt::InterruptExt;
 
 static EXECUTOR_RT: InterruptExecutor = InterruptExecutor::new();
 
 #[interrupt]
 unsafe fn EGU1_SWI1() {
-    unsafe {
-        EXECUTOR_RT.on_interrupt()
-    }
+    unsafe { EXECUTOR_RT.on_interrupt() }
 }
 
 bind_interrupts!(struct Irqs {
@@ -56,14 +53,7 @@ async fn main(spawner: Spawner) {
     interrupt::EGU1_SWI1.set_priority(Priority::P1);
     let rt_spawner = EXECUTOR_RT.start(interrupt::EGU1_SWI1);
 
-    let resources = ImuRessources::new(
-        p.P1_08,
-        p.P0_11,
-        p.GPIOTE_CH0,
-        p.TWISPI0,
-        p.P0_07,
-        p.P0_27,
-    );
+    let resources = ImuRessources::new(p.P1_08, p.P0_11, p.GPIOTE_CH0, p.TWISPI0, p.P0_07, p.P0_27);
 
     info!("Spawning tasks");
     let _ = rt_spawner.spawn(sample_task(p.P0_26, resources)).unwrap();
@@ -74,14 +64,7 @@ async fn main(spawner: Spawner) {
     let mut spi_config = spim::Config::default();
     spi_config.frequency = spim::Frequency::M8;
 
-    let spi_bus = Spim::new(
-        p.TWISPI1,
-        Irqs,
-        p.P1_13,
-        p.P1_14,
-        p.P1_15,
-        spi_config,
-    );
+    let spi_bus = Spim::new(p.TWISPI1, Irqs, p.P1_13, p.P1_14, p.P1_15, spi_config);
 
     let spi_device = ExclusiveDevice::new(spi_bus, cs, Delay).unwrap();
 
@@ -93,7 +76,6 @@ async fn main(spawner: Spawner) {
         Timer::after_secs(100).await;
     }
 }
-
 
 static SAMPLES_CHANNEL: Channel<CriticalSectionRawMutex, Sample, 1024> = Channel::new();
 static COMPLETE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
@@ -125,7 +107,7 @@ async fn sample_task(power_led: Peri<'static, P0_26>, resources: ImuRessources) 
 
         led.set_high();
         if start.elapsed().as_secs() >= 5 {
-            break
+            break;
         }
     }
     imu.poweroff();
@@ -143,17 +125,19 @@ impl TimeSource for DummyClock {
 }
 
 #[embassy_executor::task]
-async fn do_sd_card(spi_device: ExclusiveDevice<Spim<'static, >, Output<'static>, Delay>) {
-    let mut sdcard = SdCard::new(spi_device, Delay);
+async fn do_sd_card(spi_device: ExclusiveDevice<Spim<'static>, Output<'static>, Delay>) {
+    let sdcard = SdCard::new(spi_device, Delay);
 
     let s = sdcard.num_bytes().unwrap();
     info!("SD card is {} bytes", s);
 
-    let mut volume_mgr = VolumeManager::new(sdcard, DummyClock);
-    let mut volume0 = volume_mgr.open_volume(VolumeIdx(0)).unwrap();
-    let mut root_dir = volume0.open_root_dir().unwrap();
+    let volume_mgr = VolumeManager::new(sdcard, DummyClock);
+    let volume0 = volume_mgr.open_volume(VolumeIdx(0)).unwrap();
+    let root_dir = volume0.open_root_dir().unwrap();
 
-    let mut my_file = root_dir.open_file_in_dir("TEST.TXT", embedded_sdmmc::Mode::ReadWriteCreateOrTruncate).unwrap();
+    let my_file = root_dir
+        .open_file_in_dir("TEST.TXT", embedded_sdmmc::Mode::ReadWriteCreateOrTruncate)
+        .unwrap();
 
     let r = SAMPLES_CHANNEL.receiver();
     loop {
@@ -162,16 +146,21 @@ async fn do_sd_card(spi_device: ExclusiveDevice<Spim<'static, >, Output<'static>
         }
         let sample = r.receive().await;
         let mut line = String::<128>::new();
-            line.clear();
-            write!(
-                line,
-                "{},{},{},{},{},{},{}\n",
-                Instant::now().as_micros(),
-                sample.g_x, sample.g_y, sample.g_z,
-                sample.a_x, sample.a_y, sample.a_z
-            ).unwrap();
-            my_file.write(line.as_bytes()).unwrap();
-            yield_now().await;
+        line.clear();
+        write!(
+            line,
+            "{},{},{},{},{},{},{}\n",
+            Instant::now().as_micros(),
+            sample.g_x,
+            sample.g_y,
+            sample.g_z,
+            sample.a_x,
+            sample.a_y,
+            sample.a_z
+        )
+        .unwrap();
+        my_file.write(line.as_bytes()).unwrap();
+        yield_now().await;
     }
 
     my_file.close().unwrap();

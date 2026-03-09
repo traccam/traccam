@@ -1,12 +1,12 @@
-use static_cell::{ConstStaticCell,};
-use heapless::Vec;
-use embassy_nrf::{twim, Peri,};
+use crate::Irqs;
 use embassy_nrf::gpio::{Level, Output, OutputDrive, Pull};
 use embassy_nrf::gpiote::{InputChannel, InputChannelPolarity};
 use embassy_nrf::peripherals::{GPIOTE_CH0, P0_07, P0_11, P0_27, P1_08, TWISPI0};
 use embassy_nrf::twim::Twim;
-use embassy_time::{Timer};
-use crate::Irqs;
+use embassy_nrf::{Peri, twim};
+use embassy_time::Timer;
+use heapless::Vec;
+use static_cell::ConstStaticCell;
 
 /// Implementing the LSM6DS3TR-C IMU
 /// https://www.st.com/resource/en/datasheet/lsm6ds3tr-c.pdf
@@ -15,14 +15,14 @@ const IMU_ADDR: u8 = 0x6A; // Default I2C address for LSM6DS3TR-C
 const REG_FIFO_DATA_OUT_L: u8 = 0x3E; // Start of FIFO data register
 
 pub struct ImuRessources {
-	interrupt: InputChannel<'static>,
-	imu_i2c: Twim<'static>,
-	power: Output<'static>,
+    interrupt: InputChannel<'static>,
+    imu_i2c: Twim<'static>,
+    power: Output<'static>,
 }
 
 pub struct Imu {
-	res: ImuRessources,
-	fifo_buf: [u8; 4096],
+    res: ImuRessources,
+    fifo_buf: [u8; 4096],
 }
 
 const FIFO_CTRL3: u8 = 0x08;
@@ -48,155 +48,158 @@ const WATERMARK_LIMIT: u8 = 250; // Amount of words
 const FIFO_MAX_SAMPLES: usize = FIFO_BUFSIZE / BYTES_PER_SAMPLE;
 
 impl Imu {
-	pub async fn init(
-		mut res: ImuRessources,
-	) -> Self {
-		// Ensure full reset and power discharge
-		res.power.set_low();
-		Timer::after_millis(200).await;
-		res.power.set_high();
+    pub async fn init(mut res: ImuRessources) -> Self {
+        // Ensure full reset and power discharge
+        res.power.set_low();
+        Timer::after_millis(200).await;
+        res.power.set_high();
 
-		// Let it boot, manual says 3ms, but our power Rail takes up to 300ms to rise (minimum)
-		Timer::after_millis(500).await;
+        // Let it boot, manual says 3ms, but our power Rail takes up to 300ms to rise (minimum)
+        Timer::after_millis(500).await;
 
-		let cmds = [
-			[CTRL3_C, 0b01000100], //         BDU=1, IF_INC=1
-			[FIFO_CTRL1, WATERMARK_LIMIT], // Watermark LSB
-			[FIFO_CTRL2, 0x00], //            Watermark MSB = 0
-			[FIFO_CTRL3, 0b00001001], //      No decimation
-			[FIFO_CTRL5, 0b01000110], //      1.66kHz, Continuous mode
-			[INT1_CTRL, 0b00011000], //       Route FIFO threshold  and overrun to INT1
-			[CTRL1_XL, 0b10000000], //        Accel 1.66kHz, 2g
-			[CTRL2_G, 0b10000000], //         Gyro 1.66kHz, 250dps
-		];
+        let cmds = [
+            [CTRL3_C, 0b01000100],         //         BDU=1, IF_INC=1
+            [FIFO_CTRL1, WATERMARK_LIMIT], // Watermark LSB
+            [FIFO_CTRL2, 0x00],            //            Watermark MSB = 0
+            [FIFO_CTRL3, 0b00001001],      //      No decimation
+            [FIFO_CTRL5, 0b01000110],      //      1.66kHz, Continuous mode
+            [INT1_CTRL, 0b00011000],       //       Route FIFO threshold  and overrun to INT1
+            [CTRL1_XL, 0b10000000],        //        Accel 1.66kHz, 2g
+            [CTRL2_G, 0b10000000],         //         Gyro 1.66kHz, 250dps
+        ];
 
-		for cmd in cmds {
-			res.imu_i2c.write(IMU_ADDR, &cmd).await.unwrap();
-		}
+        for cmd in cmds {
+            res.imu_i2c.write(IMU_ADDR, &cmd).await.unwrap();
+        }
 
-		Self {
-			res,
-			fifo_buf: [0_u8; FIFO_BUFSIZE],
-		}
-	}
+        Self {
+            res,
+            fifo_buf: [0_u8; FIFO_BUFSIZE],
+        }
+    }
 
-	pub async fn read_raw_samples(&mut self) -> &[u8; FIFO_BUFSIZE] {
-		let ram_reg = [REG_FIFO_DATA_OUT_L]; // DO NOT INLINE!!! DMA requires this in RAM
-		self.res.imu_i2c.write_read(IMU_ADDR, &ram_reg, &mut self.fifo_buf).await.unwrap();
-		&self.fifo_buf
-	}
+    pub async fn read_raw_samples(&mut self) -> &[u8; FIFO_BUFSIZE] {
+        let ram_reg = [REG_FIFO_DATA_OUT_L]; // DO NOT INLINE!!! DMA requires this in RAM
+        self.res
+            .imu_i2c
+            .write_read(IMU_ADDR, &ram_reg, &mut self.fifo_buf)
+            .await
+            .unwrap();
+        &self.fifo_buf
+    }
 
-	pub async fn read_samples(&mut self, out: &mut Vec<Sample, { FIFO_MAX_SAMPLES + 200 /* Somehow max_samples isnt enough. I Suspect its an issue with FIFO filling while emptying */ }>) {
-		out.clear();
-		let (to_read, overrun) = self.fifo_status().await;
-		let data = self.read_raw_samples().await;
+    pub async fn read_samples(
+        &mut self,
+        out: &mut Vec<
+            Sample,
+            {
+                FIFO_MAX_SAMPLES + 200 /* Somehow max_samples isnt enough. I Suspect its an issue with FIFO filling while emptying */
+            },
+        >,
+    ) {
+        out.clear();
+        let (to_read, overrun) = self.fifo_status().await;
+        let data = self.read_raw_samples().await;
 
-		defmt::assert!(!overrun, "FIFO overrun!");
-		defmt::assert!(to_read < out.capacity(), "Outvec overrun!");
+        defmt::assert!(!overrun, "FIFO overrun!");
+        defmt::assert!(to_read < out.capacity(), "Outvec overrun!");
 
-		for chunk in data[..to_read].chunks_exact(12) {
-			let g_x_raw = i16::from_le_bytes([chunk[0], chunk[1]]);
-			let g_y_raw = i16::from_le_bytes([chunk[2], chunk[3]]);
-			let g_z_raw = i16::from_le_bytes([chunk[4], chunk[5]]);
+        for chunk in data[..to_read].chunks_exact(12) {
+            let g_x_raw = i16::from_le_bytes([chunk[0], chunk[1]]);
+            let g_y_raw = i16::from_le_bytes([chunk[2], chunk[3]]);
+            let g_z_raw = i16::from_le_bytes([chunk[4], chunk[5]]);
 
-			let a_x_raw = i16::from_le_bytes([chunk[6], chunk[7]]);
-			let a_y_raw = i16::from_le_bytes([chunk[8], chunk[9]]);
-			let a_z_raw = i16::from_le_bytes([chunk[10], chunk[11]]);
+            let a_x_raw = i16::from_le_bytes([chunk[6], chunk[7]]);
+            let a_y_raw = i16::from_le_bytes([chunk[8], chunk[9]]);
+            let a_z_raw = i16::from_le_bytes([chunk[10], chunk[11]]);
 
-			let a_x = (a_x_raw as f32) * 0.061 / 1000.0;
-			let a_y = (a_y_raw as f32) * 0.061 / 1000.0;
-			let a_z = (a_z_raw as f32) * 0.061 / 1000.0;
+            let a_x = (a_x_raw as f32) * 0.061 / 1000.0;
+            let a_y = (a_y_raw as f32) * 0.061 / 1000.0;
+            let a_z = (a_z_raw as f32) * 0.061 / 1000.0;
 
-			let g_x = (g_x_raw as f32) * 8.75 / 1000.0;
-			let g_y = (g_y_raw as f32) * 8.75 / 1000.0;
-			let g_z = (g_z_raw as f32) * 8.75 / 1000.0;
+            let g_x = (g_x_raw as f32) * 8.75 / 1000.0;
+            let g_y = (g_y_raw as f32) * 8.75 / 1000.0;
+            let g_z = (g_z_raw as f32) * 8.75 / 1000.0;
 
-			out.push(Sample {
-				g_x,
-				g_y,
-				g_z,
-				a_x,
-				a_y,
-				a_z,
-			}).unwrap();
-		}
-	}
+            out.push(Sample {
+                g_x,
+                g_y,
+                g_z,
+                a_x,
+                a_y,
+                a_z,
+            })
+            .unwrap();
+        }
+    }
 
-	pub async fn data_interrupt(&mut self)  {
-		self.res.interrupt.wait().await
-	}
+    pub async fn data_interrupt(&mut self) {
+        self.res.interrupt.wait().await
+    }
 
-	pub async fn fifo_status(&mut self) -> (usize, bool) {
-		let mut status = [0u8; 2];
-		// DO NOT INLINE!!! DMA requires this in RAM
-		let ram_reg = [0x3A]; // FIFO_STATUS1 (0x3A) and FIFO_STATUS2 (0x3B)
+    pub async fn fifo_status(&mut self) -> (usize, bool) {
+        let mut status = [0u8; 2];
+        // DO NOT INLINE!!! DMA requires this in RAM
+        let ram_reg = [0x3A]; // FIFO_STATUS1 (0x3A) and FIFO_STATUS2 (0x3B)
 
-		self.res.imu_i2c.write_read(IMU_ADDR, &ram_reg, &mut status).await.unwrap();
+        self.res
+            .imu_i2c
+            .write_read(IMU_ADDR, &ram_reg, &mut status)
+            .await
+            .unwrap();
 
-		// Combine lower 8 bits and upper 4 bits
-		let diff_fifo = (status[0] as u16) | (((status[1] & 0x0F) as u16) << 8);
+        // Combine lower 8 bits and upper 4 bits
+        let diff_fifo = (status[0] as u16) | (((status[1] & 0x0F) as u16) << 8);
 
-		let bytes_to_read = (diff_fifo as usize) * 2;
-		let overrun = (status[1] & 0x40) != 0;
+        let bytes_to_read = (diff_fifo as usize) * 2;
+        let overrun = (status[1] & 0x40) != 0;
 
-		(bytes_to_read, overrun)
-	}
+        (bytes_to_read, overrun)
+    }
 
-	pub fn poweroff(mut self) -> ImuRessources {
-		self.res.power.set_low();
-		self.res
-	}
+    pub fn poweroff(mut self) -> ImuRessources {
+        self.res.power.set_low();
+        self.res
+    }
 }
-
 
 static TX_BUFFER: ConstStaticCell<[u8; 512]> = ConstStaticCell::new([0_u8; 512]);
 
 impl ImuRessources {
-	pub fn new(
-		power_pin: Peri<'static, P1_08>,
-		int1_pin: Peri<'static, P0_11>,
-		gpiote: Peri<'static, GPIOTE_CH0>,
-		twisp: Peri<'static, TWISPI0>,
-		sda: Peri<'static, P0_07>,
-		scl: Peri<'static, P0_27>,
-	) -> Self {
-		// IMU draws quite some power at start, we need to use HighDrive
-		let power = Output::new(power_pin, Level::Low, OutputDrive::HighDrive);
+    pub fn new(
+        power_pin: Peri<'static, P1_08>,
+        int1_pin: Peri<'static, P0_11>,
+        gpiote: Peri<'static, GPIOTE_CH0>,
+        twisp: Peri<'static, TWISPI0>,
+        sda: Peri<'static, P0_07>,
+        scl: Peri<'static, P0_27>,
+    ) -> Self {
+        // IMU draws quite some power at start, we need to use HighDrive
+        let power = Output::new(power_pin, Level::Low, OutputDrive::HighDrive);
 
-		let interrupt = InputChannel::new(
-			gpiote,
-			int1_pin,
-			Pull::None,
-			InputChannelPolarity::LoToHi,
-		);
+        let interrupt =
+            InputChannel::new(gpiote, int1_pin, Pull::None, InputChannelPolarity::LoToHi);
 
-		let mut twim_config = twim::Config::default();
-		twim_config.frequency = twim::Frequency::K400;
+        let mut twim_config = twim::Config::default();
+        twim_config.frequency = twim::Frequency::K400;
 
-		let imu_i2c = Twim::new(
-			twisp,
-			Irqs,
-			sda,
-			scl,
-			twim_config,
-			TX_BUFFER.take(),
-		);
+        let imu_i2c = Twim::new(twisp, Irqs, sda, scl, twim_config, TX_BUFFER.take());
 
-		Self {
-			interrupt,
-			imu_i2c,
-			power,
-		}
-	}
+        Self {
+            interrupt,
+            imu_i2c,
+            power,
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug)]
 pub struct Sample {
-	pub g_x: f32,
-	pub g_y: f32,
-	pub g_z: f32,
+    pub g_x: f32,
+    pub g_y: f32,
+    pub g_z: f32,
 
-	pub a_x: f32,
-	pub a_y: f32,
-	pub a_z: f32,
+    pub a_x: f32,
+    pub a_y: f32,
+    pub a_z: f32,
 }
