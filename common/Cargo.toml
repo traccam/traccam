@@ -5,6 +5,10 @@ edition = "2024"
 
 [features]
 default = []
+
+gyro_text = []
+gyro_binary = []
+
 simulated_data = ["fastrand", "std", "chrono/clock"]
 std = []
 fastrand = ["dep:fastrand"]
@@ -13,6 +17,7 @@ fastrand = ["dep:fastrand"]
 chrono = { version = "0.4.43", default-features = false }
 embedded-graphics = "0.8.2"
 heapless = "0.9.2"
+zerocopy = { version = "0.8", default-features = false, features = ["derive"] }
 
 # Simulated data crates
 fastrand = { version = "2.3.0", optional = true }

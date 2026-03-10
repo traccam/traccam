@@ -2,9 +2,10 @@
 #![no_main]
 
 mod imu;
-
+use embassy_sync::pipe::Pipe;
+use traccam_common::gyro_format::text::get_header_string;
 use crate::imu::SAMPLE_INTERVAL_MICROS;
-use crate::imu::{Imu, ImuRessources, Sample};
+use crate::imu::{Imu, ImuRessources};
 use core::fmt::Write;
 use core::ops::Add;
 use defmt::info;
@@ -81,7 +82,7 @@ async fn main(spawner: Spawner) {
     }
 }
 
-static SAMPLES_CHANNEL: Channel<CriticalSectionRawMutex, Sample, 1024> = Channel::new();
+static SAMPLES: Pipe<CriticalSectionRawMutex, { 1024 * 2 }> = Pipe::new();
 static COMPLETE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 static IMU_READY: Signal<CriticalSectionRawMutex, Instant> = Signal::new();
 
@@ -93,21 +94,15 @@ async fn sample_task(power_led: Peri<'static, P0_26>, resources: ImuRessources) 
     let mut imu = Imu::init(resources).await;
     info!("IMU ready");
     IMU_READY.signal(Instant::now());
-    let sender = SAMPLES_CHANNEL.sender();
 
     let start = Instant::now();
     info!("Started sampling");
-    let mut samples = Vec::new();
     loop {
         imu.data_interrupt().await;
 
         led.set_low();
 
-        samples.clear();
-        imu.read_samples(&mut samples).await;
-        for sample in &samples {
-            sender.send(*sample).await;
-        }
+        imu.read_samples(&SAMPLES).await;
 
         led.set_high();
         if start.elapsed().as_secs() >= 5 {
@@ -142,56 +137,26 @@ async fn do_sd_card(
     let volume0 = volume_mgr.open_volume(VolumeIdx(0)).unwrap();
     let root_dir = volume0.open_root_dir().unwrap();
 
-    let my_file = root_dir
-        .open_file_in_dir("LOG.GSV", embedded_sdmmc::Mode::ReadWriteCreateOrTruncate)
+    let mut my_file = root_dir
+        .open_file_in_dir("LOG.CSV", embedded_sdmmc::Mode::ReadWriteCreateOrTruncate)
         .unwrap();
 
-    let header = r#"GYROFLOW IMU LOG
-version,1.3
-id,xiao_nrf52840
-orientation,XYZ
-tscale,0.000001
-gscale,0.0174532925
-ascale,1.0
-t,gx,gy,gz,ax,ay,az
-"#;
 
-    my_file.write(header.as_bytes()).unwrap();
+    my_file.write(get_header_string().as_bytes()).unwrap(); // TODO: Replace with binary header
+    let mut total = 0;
 
-
-    let r = SAMPLES_CHANNEL.receiver();
-    let mut line = String::<1024>::new();
-    let mut sample_count = 0;
-
-    'outer: loop {
-
-        line.clear();
-
-        for _ in 0..10 {
-            if r.is_empty() && COMPLETE.signaled() {
-                break 'outer;
-            }
-            let sample = r.receive().await;
-            let sample_time = start.add(Duration::from_micros((sample_count as f32 * SAMPLE_INTERVAL_MICROS) as u64));
-            write!(
-                line,
-                "{},{},{},{},{},{},{}\n",
-                sample_time.as_micros(),
-                sample.g_x,
-                sample.g_y,
-                sample.g_z,
-                sample.a_x,
-                sample.a_y,
-                sample.a_z
-            )
-            .unwrap();
-            sample_count += 1;
-            yield_now().await;
+    let mut data = [0_u8;512];
+    loop {
+        if COMPLETE.signaled() && SAMPLES.is_empty() {
+            break
         }
-        my_file.write(line.as_bytes()).unwrap();
-        yield_now().await;
+        let read = SAMPLES.read(&mut data).await;
+        total += read;
+        my_file.write(&data[..read]).unwrap();
     }
 
+    info!("{}", total);
+    my_file.flush().unwrap();
     my_file.close().unwrap();
     root_dir.close().unwrap();
     info!("Completed writing");

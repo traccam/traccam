@@ -4,6 +4,8 @@ use embassy_nrf::gpiote::{InputChannel, InputChannelPolarity};
 use embassy_nrf::peripherals::{GPIOTE_CH0, P0_07, P0_11, P0_27, P1_08, TWISPI0};
 use embassy_nrf::twim::Twim;
 use embassy_nrf::{Peri, twim};
+use embassy_sync::blocking_mutex::raw::RawMutex;
+use embassy_sync::pipe::Pipe;
 use embassy_time::Timer;
 use heapless::Vec;
 use static_cell::ConstStaticCell;
@@ -12,7 +14,8 @@ use static_cell::ConstStaticCell;
 /// https://www.st.com/resource/en/datasheet/lsm6ds3tr-c.pdf
 
 const IMU_ADDR: u8 = 0x6A; // Default I2C address for LSM6DS3TR-C
-const REG_FIFO_DATA_OUT_L: u8 = 0x3E; // Start of FIFO data register
+const REG_FIFO_DATA_OUT_L: u8 = 0x3E;
+const REG_FIFO_DATA_OUT_H: u8 = 0x3F;
 
 pub struct ImuRessources {
     interrupt: InputChannel<'static>,
@@ -65,10 +68,10 @@ impl Imu {
             [FIFO_CTRL1, WATERMARK_LIMIT], // Watermark LSB
             [FIFO_CTRL2, 0x00],            //            Watermark MSB = 0
             [FIFO_CTRL3, 0b00001001],      //      No decimation
-            [FIFO_CTRL5, 0b01000110],      //      1.66kHz, Continuous mode
+            [FIFO_CTRL5, 0b0_1000_110],      //      1.66kHz, Continuous mode
             [INT1_CTRL, 0b00011000],       //       Route FIFO threshold  and overrun to INT1
-            [CTRL1_XL, 0b10000000],        //        Accel 1.66kHz, 2g
-            [CTRL2_G, 0b10000000],         //         Gyro 1.66kHz, 250dps
+            [CTRL1_XL, 0b1000_00_0_0],        //        Accel 1.66kHz, 2g
+            [CTRL2_G, 0b1000_00_0_0],         //         Gyro 1.66kHz, 250dps
         ];
 
         for cmd in cmds {
@@ -81,59 +84,24 @@ impl Imu {
         }
     }
 
-    pub async fn read_raw_samples(&mut self) -> &[u8; FIFO_BUFSIZE] {
-        let ram_reg = [REG_FIFO_DATA_OUT_L]; // DO NOT INLINE!!! DMA requires this in RAM
+    pub async fn read_raw_samples(&mut self, to_read: usize) -> &[u8; FIFO_BUFSIZE] {
+        let ram_reg = [REG_FIFO_DATA_OUT_L]; // Start of FIFO data register
         self.res
             .imu_i2c
-            .write_read(IMU_ADDR, &ram_reg, &mut self.fifo_buf)
+            // Important to read only exactly as much as needed, otherwise the FIFO goes haywire
+            .write_read(IMU_ADDR, &ram_reg, &mut self.fifo_buf[..to_read])
             .await
             .unwrap();
         &self.fifo_buf
     }
 
-    pub async fn read_samples(
-        &mut self,
-        out: &mut Vec<
-            Sample,
-            {
-                FIFO_MAX_SAMPLES + 200 /* Somehow max_samples isnt enough. I Suspect its an issue with FIFO filling while emptying */
-            },
-        >,
-    ) {
-        out.clear();
+    pub async fn read_samples<M: RawMutex, const N: usize>(&mut self, out: &Pipe<M, N>) {
         let (to_read, overrun) = self.fifo_status().await;
-        let data = self.read_raw_samples().await;
+        let data = self.read_raw_samples(to_read).await;
 
         defmt::assert!(!overrun, "FIFO overrun!");
-        defmt::assert!(to_read < out.capacity(), "Outvec overrun!");
 
-        for chunk in data[..to_read].chunks_exact(12) {
-            let g_x_raw = i16::from_le_bytes([chunk[0], chunk[1]]);
-            let g_y_raw = i16::from_le_bytes([chunk[2], chunk[3]]);
-            let g_z_raw = i16::from_le_bytes([chunk[4], chunk[5]]);
-
-            let a_x_raw = i16::from_le_bytes([chunk[6], chunk[7]]);
-            let a_y_raw = i16::from_le_bytes([chunk[8], chunk[9]]);
-            let a_z_raw = i16::from_le_bytes([chunk[10], chunk[11]]);
-
-            let a_x = (a_x_raw as f32) * 0.061 / 1000.0;
-            let a_y = (a_y_raw as f32) * 0.061 / 1000.0;
-            let a_z = (a_z_raw as f32) * 0.061 / 1000.0;
-
-            let g_x = (g_x_raw as f32) * 8.75 / 1000.0;
-            let g_y = (g_y_raw as f32) * 8.75 / 1000.0;
-            let g_z = (g_z_raw as f32) * 8.75 / 1000.0;
-
-            out.push(Sample {
-                g_x,
-                g_y,
-                g_z,
-                a_x,
-                a_y,
-                a_z,
-            })
-            .unwrap();
-        }
+        out.write_all(&data[..to_read]).await;
     }
 
     pub async fn data_interrupt(&mut self) {
@@ -142,7 +110,6 @@ impl Imu {
 
     pub async fn fifo_status(&mut self) -> (usize, bool) {
         let mut status = [0u8; 2];
-        // DO NOT INLINE!!! DMA requires this in RAM
         let ram_reg = [0x3A]; // FIFO_STATUS1 (0x3A) and FIFO_STATUS2 (0x3B)
 
         self.res
@@ -194,15 +161,4 @@ impl ImuRessources {
             power,
         }
     }
-}
-
-#[derive(Copy, Clone, Debug)]
-pub struct Sample {
-    pub g_x: f32,
-    pub g_y: f32,
-    pub g_z: f32,
-
-    pub a_x: f32,
-    pub a_y: f32,
-    pub a_z: f32,
 }

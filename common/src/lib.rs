@@ -5,6 +5,7 @@ use chrono::{DateTime, FixedOffset, NaiveDate, NaiveTime};
 pub mod display;
 pub mod time;
 pub mod sd_storage;
+pub mod gyro_format;
 
 #[derive(Clone, Default)]
 pub struct DisplayState {
