@@ -2,7 +2,7 @@ use std::fs;
 use traccam_common::gyro_format;
 
 fn main() {
-    let p = "/run/media/flareflo/8430-A509/LOG.CSV";
+    let p = "LOG.CSV";
     let data = fs::read(p).unwrap();
     let headerlen = gyro_format::text::HEADER_LEN;
     print!("{}", gyro_format::text::get_header_string());
