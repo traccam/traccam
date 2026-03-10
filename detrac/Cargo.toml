@@ -1,0 +1,7 @@
+[package]
+name = "detrac"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+traccam_common = { path = "../common", features = ["gyro_binary", "gyro_text"]}

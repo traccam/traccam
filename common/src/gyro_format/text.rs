@@ -15,11 +15,11 @@ const HEADER: [[&str; 2]; 8] = [
 	["t,gx,gy,gz,ax,ay,az", ""],
 
 ];
-const HEADER_LEN: usize = {
+pub const HEADER_LEN: usize = {
 	let mut len = 0;
 	let mut i = 0;
 	while i < HEADER.len() {
-		len += HEADER[i][0].len() + HEADER[i][1].len() + 1; // + newline
+		len += HEADER[i][0].len() + HEADER[i][1].len() + 2; // + newline and comma
 		i += 1;
 	}
 	len
@@ -33,7 +33,7 @@ pub fn get_header_string() -> String::<HEADER_LEN> {
 
 fn write_header(w: &mut impl fmt::Write) -> Result<(), fmt::Error> {
 	for [key, value] in HEADER {
-		writeln!(w, "{key}{value}")?;
+		writeln!(w, "{key},{value}")?;
 	}
 	Ok(())
 }
