@@ -97,9 +97,9 @@ impl Imu {
 
     pub async fn read_samples<M: RawMutex, const N: usize>(&mut self, out: &Pipe<M, N>) {
         let fifo_status = self.fifo_status().await;
-        let data = self.read_raw_samples(fifo_status.unread_bytes()).await;
-
         defmt::assert!(!fifo_status.overrun, "FIFO overrun!");
+
+        let data = self.read_raw_samples(fifo_status.unread_bytes()).await;
 
         out.write_all(&data[..fifo_status.unread_bytes()]).await;
     }
