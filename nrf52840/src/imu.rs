@@ -96,19 +96,19 @@ impl Imu {
     }
 
     pub async fn read_samples<M: RawMutex, const N: usize>(&mut self, out: &Pipe<M, N>) {
-        let (to_read, overrun) = self.fifo_status().await;
-        let data = self.read_raw_samples(to_read).await;
+        let fifo_status = self.fifo_status().await;
+        let data = self.read_raw_samples(fifo_status.unread_bytes()).await;
 
-        defmt::assert!(!overrun, "FIFO overrun!");
+        defmt::assert!(!fifo_status.overrun, "FIFO overrun!");
 
-        out.write_all(&data[..to_read]).await;
+        out.write_all(&data[..fifo_status.unread_bytes()]).await;
     }
 
     pub async fn data_interrupt(&mut self) {
         self.res.interrupt.wait().await
     }
 
-    pub async fn fifo_status(&mut self) -> (usize, bool) {
+    pub async fn fifo_status(&mut self) -> FifoStatus {
         let mut status = [0u8; 2];
         let ram_reg = [0x3A]; // FIFO_STATUS1 (0x3A) and FIFO_STATUS2 (0x3B)
 
@@ -118,18 +118,33 @@ impl Imu {
             .await
             .unwrap();
 
-        // Combine lower 8 bits and upper 4 bits
-        let diff_fifo = (status[0] as u16) | (((status[1] & 0x0F) as u16) << 8);
-
-        let bytes_to_read = (diff_fifo as usize) * 2;
-        let overrun = (status[1] & 0x40) != 0;
-
-        (bytes_to_read, overrun)
+        FifoStatus {
+            below_watermark: (status[1] & 0b_1000_0000) == 0,
+            overrun: (status[1] & 0b_0100_0000) == 1,
+            fifo_full_smart: (status[1] & 0b_0010_0000) == 1,
+            fifo_empty: (status[1] & 0b_0001_0000) == 1,
+            unread_bytes: ((status[0] as u16) | (((status[1] & 0x0F) as u16) << 8)) * 2, // It returns amount of words, each word is 16 bit
+        }
     }
 
     pub fn poweroff(mut self) -> ImuRessources {
         self.res.power.set_low();
         self.res
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct FifoStatus {
+    below_watermark: bool,
+    overrun: bool,
+    fifo_full_smart: bool,
+    fifo_empty: bool,
+    unread_bytes: u16,
+}
+
+impl FifoStatus {
+    pub fn unread_bytes(&self) -> usize {
+        self.unread_bytes as usize
     }
 }
 
